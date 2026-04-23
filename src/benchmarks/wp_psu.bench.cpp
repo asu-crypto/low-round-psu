@@ -1,6 +1,9 @@
 #include "catch2/catch_test_macros.hpp"
 #include "catch2/benchmark/catch_benchmark.hpp"
 #include "../wp_psu.hpp"
+#include <boost/asio/thread_pool.hpp>
+#include <boost/asio/post.hpp>
+#include <boost/optional.hpp>
 #include <stdint.h>
 #include <vector>
 #include <array>
@@ -8,13 +11,16 @@
 #include "cryptoTools/Common/Aligned.h"
 #include "cryptoTools/Common/block.h"
 #include "coproto/coproto.h"
+#include "coproto/Socket/AsioSocket.h"
 #include "../egpal.hpp"
 #include "../u128_mod_op_utils.hpp"
 #include "../iblt.hpp"
 #include <gmpxx.h>
 #include <set>
 
-using coproto::Socket;
+using namespace coproto;
+
+
 using osuCrypto::AlignedUnVector;
 using osuCrypto::PRNG;
 using std::vector;
@@ -820,6 +826,114 @@ TEST_CASE("wp_psu online phase with n=2^20 input set sizes", "[wp_psu][online][n
         REQUIRE(y_diff_x_out == expected_difference);
     
     };
+}
+
+TEST_CASE("wp_psu online phase with n=2^20 input set sizes over a network", "[wp_psu][online][n=2^20][network]") {
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<uint64_t> distrib(0, UINT64_MAX);
+    
+    PRNG test_prng(block(distrib(gen), distrib(gen)));
+    PRNG sender_priv_prg(block(distrib(gen), distrib(gen)));
+    PRNG receiver_priv_prg(block(distrib(gen), distrib(gen)));
+        
+     size_t input_set_size = 1 << 20; 
+
+    AlignedUnVector<block> sender_input_set(input_set_size);
+    AlignedUnVector<block> receiver_input_set(input_set_size);
+    vector<uint64_t> y_diff_x_out;
+
+    std::string ip = "127.0.0.1:1212";
+		
+    boost::asio::io_context ioc;
+
+    std::vector<std::thread> thrds(2);
+
+    boost::optional<boost::asio::io_context::work> w(ioc);
+
+    for (auto& t : thrds)
+        t = std::thread([&] {ioc.run(); });
+
+    AsioAcceptor connectionAcceptor(ip, ioc);
+    AsioConnect connector(ip, ioc);
+
+    auto sockets = macoro::sync_wait(macoro::when_all_ready(connectionAcceptor.accept(), std::move(connector)));
+
+    AsioSocket
+        sender_socket = std::get<0>(sockets).result(),
+        receiver_socket = std::get<1>(sockets).result();
+
+    macoro::thread_pool pool0, pool1;
+    auto w0 = pool0.make_work();
+    auto w1 = pool1.make_work();
+    pool0.create_thread();
+    pool1.create_thread();
+
+    sender_socket.setExecutor(pool0);
+    receiver_socket.setExecutor(pool1);
+
+    BENCHMARK_ADVANCED("n=2^20 online phase")(Catch::Benchmark::Chronometer meter) {
+        y_diff_x_out.clear();
+        
+        auto socks = coproto::LocalAsyncSocket::makePair();
+
+        wp_psu::sender_precomp_correlation sender_precomp;
+        wp_psu::receiver_precomp_correlation receiver_precomp;
+
+        macoro::thread_pool pool0, pool1;
+        auto w0 = pool0.make_work();
+        auto w1 = pool1.make_work();
+        pool0.create_thread();
+        pool1.create_thread();
+
+        socks[0].setExecutor(pool0);
+        socks[1].setExecutor(pool1);
+
+        auto p0 = wp_psu::sender_fake_preprocess(input_set_size, sender_priv_prg, sender_precomp, sender_socket);
+        auto p1 = wp_psu::receiver_fake_preprocess(input_set_size, receiver_priv_prg, receiver_precomp, receiver_socket);
+
+        coproto::sync_wait(macoro::when_all_ready(
+                        std::move(p0) | macoro::start_on(pool0),
+                        std::move(p1) | macoro::start_on(pool1)));
+
+        for (size_t i = 0; i < input_set_size; i++) {
+            sender_input_set[i] = block(0, test_prng.get<uint64_t>());
+            receiver_input_set[i] = block(0, test_prng.get<uint64_t>()); 
+        }
+        
+        p0 = wp_psu::send(sender_precomp, sender_input_set, sender_priv_prg, sender_socket);
+        p1 = wp_psu::receive(receiver_precomp, receiver_input_set, receiver_priv_prg, y_diff_x_out, receiver_socket);
+        
+        meter.measure([&p0,&p1,&pool0,&pool1]() {
+            coproto::sync_wait(macoro::when_all_ready(
+                            std::move(p0) | macoro::start_on(pool0),
+                            std::move(p1) | macoro::start_on(pool1)));
+        });
+
+        std::set<uint64_t> sender_set, receiver_set;
+        for (size_t i = 0; i < input_set_size; i++) {
+            sender_set.insert(sender_input_set[i].get<uint64_t>()[0]);
+            receiver_set.insert(receiver_input_set[i].get<uint64_t>()[0]);
+        }
+
+        std::vector<uint64_t> expected_difference;
+        std::set_difference(sender_set.begin(), sender_set.end(),
+                            receiver_set.begin(), receiver_set.end(),
+                            std::back_inserter(expected_difference));
+
+        std::sort(expected_difference.begin(), expected_difference.end());
+
+        std::sort(y_diff_x_out.begin(), y_diff_x_out.end());
+
+        REQUIRE(y_diff_x_out == expected_difference);
+    
+    };
+
+    w.reset();
+
+    for (auto& t : thrds)
+        t.join();
+
 }
 
 /*
