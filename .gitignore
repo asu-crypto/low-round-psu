@@ -1,0 +1,8 @@
+src/build/**
+clang-src/build/**
+src/core.*
+clang-src/gmon.out
+clang-src/gprof.out
+.vscode/**
+clang-src/CMakeLists copy.txt
+MODEXP_BENCHMARK_README.md
