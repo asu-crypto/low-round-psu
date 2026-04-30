@@ -3,3 +3,6 @@ clang-src/**
 src/clang-src/build/**
 MODEXP_BENCHMARK_README.md
 .vscode/settings.json
+src/core.*
+src/gmon.out
+src/gprof.out
