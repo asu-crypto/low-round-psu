@@ -1,8 +1,5 @@
 src/build/**
-clang-src/build/**
-src/core.*
-clang-src/gmon.out
-clang-src/gprof.out
-.vscode/**
-clang-src/CMakeLists copy.txt
+clang-src/**
+src/clang-src/build/**
 MODEXP_BENCHMARK_README.md
+.vscode/settings.json
