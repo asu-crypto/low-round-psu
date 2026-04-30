@@ -16,10 +16,7 @@ void ct_iblt::init(table& t, osuCrypto::block hash_func_seed, size_t threshold) 
     const size_t tab_len = iblt::calc_tab_len(threshold);
 
     // Sets hash functions based on the provided seed.
-    PRNG prng(hash_func_seed);
-    for (size_t i = 0; i < NUM_HASH_FUNCS; i++) {
-        t.hash_funcs[i].setKey(prng.get<block>());
-    }
+    t.aes.setKey(hash_func_seed);
 
     // Initialize sum and count vectors with 1s
     t.sum_vec.resize(tab_len);
@@ -38,18 +35,26 @@ static bool iblt_initiated(const ct_iblt::table& t) {
     return t.ell > 0 && t.sum_vec.size() == ct_iblt::NUM_HASH_FUNCS * t.ell &&  t.sum_vec.size() == t.cnt_vec.size();
 }
 
-inline static void hash_key(size_t subtable_len, 
-                            const array<AES, ct_iblt::NUM_HASH_FUNCS>& hash_funcs, 
-                            uint64_t key, 
-                            array<size_t, ct_iblt::NUM_HASH_FUNCS>& idxs) {
+inline static void hash_key(size_t subtable_len, const AES& aes, uint64_t key, array<uint32_t, ct_iblt::NUM_HASH_FUNCS>& idxs) {
+    //THIS FUNCTION ASSUMES NUM_HASH_FUNCS = 5.
 
-    block aes_in = block(0, key);
+    block aes_input = block(17297294899400865416ULL, key);
 
-    for (size_t i = 0; i < ct_iblt::NUM_HASH_FUNCS; i++) {
-        block aes_hash_out = hash_funcs[i].hashBlock(aes_in);
-        idxs[i] = aes_hash_out.get<uint64_t>()[0] % subtable_len;
-    }
+    block aes_hash_out = aes.hashBlock(aes_input);
 
+    uint64_t* aes_hash_out_as_u64 = reinterpret_cast<uint64_t*>(&aes_hash_out);
+    uint64_t ls64bs = aes_hash_out_as_u64[0];
+    uint64_t ms64bs = aes_hash_out_as_u64[1];
+
+    uint64_t ls25bs_msk = (1 << 25) - 1; // Mask for the least significant 25 bits, since the maximum subtable length is less than 2^25 for all tested thresholds.
+
+    uint32_t u32_subtab_len = static_cast<uint32_t>(subtable_len);
+
+    idxs[0] = (ls64bs & ls25bs_msk) % u32_subtab_len;
+    idxs[1] = ((ls64bs >> 25) & ls25bs_msk) % u32_subtab_len;
+    idxs[2] = (((ls64bs >> 50) | (ms64bs << 14)) & ls25bs_msk) % u32_subtab_len;
+    idxs[3] = ((ms64bs >> 11) & ls25bs_msk) % u32_subtab_len;
+    idxs[4] = ((ms64bs >> 36) & ls25bs_msk) % u32_subtab_len;
 
 }
 
@@ -65,10 +70,10 @@ void ct_iblt::insert(const eg_pal::crs& crs,
     const size_t tab_len = t.sum_vec.size();
     const size_t n = w_vec.size();
 
-    array<size_t, ct_iblt::NUM_HASH_FUNCS> idxs;
+    array<uint32_t, ct_iblt::NUM_HASH_FUNCS> idxs;
 
     for (size_t i = 0; i < n; i++) {
-        hash_key(ell, t.hash_funcs, w_vec[i], idxs);
+        hash_key(ell, t.aes, w_vec[i], idxs);
         
         for (size_t j = 0; j < ct_iblt::NUM_HASH_FUNCS; j++) {
             const size_t idx = j * ell + idxs[j];

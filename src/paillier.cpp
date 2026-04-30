@@ -2,9 +2,12 @@
 #include <gmpxx.h>
 #include "./rand.hpp"
 #include "./ss.hpp"
+#include <boost/asio/thread_pool.hpp>
+#include <boost/asio/post.hpp>
 
 using osuCrypto::PRNG;
 using osuCrypto::AlignedUnVector;
+using std::span;
 
 void pal::keygen(size_t blum_int_bitlen, 
                 size_t miller_rabin_rounds_per_prime,
@@ -66,6 +69,43 @@ void pal::distrib_dec_vec(size_t party_idx, const pal::pk& pk, const pal::sk_sha
     }
 }
 
+void pal::distrib_dec_vec(size_t party_idx, const pal::pk& pk, const pal::sk_share& sk_share, std::span<mpz_class>& ct_vec, std::span<mpz_class>& adss_vec) {
+    assert(ct_vec.size() == adss_vec.size()); // Ensure the input and output spans have the same size
+
+    for (size_t i = 0; i < ct_vec.size(); ++i) {
+        distrib_dec(party_idx, pk, sk_share, ct_vec[i], adss_vec[i]);
+    }
+}
+
+void pal::distrib_dec_vec(size_t party_idx, const pal::pk& pk, const pal::sk_share& sk_share, const std::vector<mpz_class>& ct_vec, std::vector<mpz_class>& adss_vec, size_t num_threads) {
+    assert(ct_vec.size() == adss_vec.size()); // Ensure the input and output vectors have the same size
+    assert(num_threads > 0); // Ensure num_threads is valid
+
+    if (num_threads == 1) {
+        distrib_dec_vec(party_idx, pk, sk_share, ct_vec, adss_vec);
+        return;
+    }
+
+    const size_t vec_size = ct_vec.size();
+
+    boost::asio::thread_pool pool(num_threads);
+
+    size_t n_per_thread_ceil = (vec_size + num_threads - 1) / num_threads; // Ceiling division to determine how many ciphertexts each thread should process per round
+
+    for (size_t i = 0; i < num_threads; i++) {
+        size_t start_idx = i * n_per_thread_ceil;
+        size_t end_idx = std::min(start_idx + n_per_thread_ceil, vec_size); // Ensure we don't go out of bounds
+
+        boost::asio::post(pool, [party_idx, &pk, &sk_share, &ct_vec, &adss_vec, start_idx, end_idx]() {
+            for (size_t j = start_idx; j < end_idx; ++j) {
+                distrib_dec(party_idx, pk, sk_share, ct_vec[j], adss_vec[j]);
+            }
+        });
+    }
+
+    pool.join();
+
+}
 
 void pal::encrypt(const pal::pk& pk, const mpz_class& plaintext, osuCrypto::PRNG& prg, mpz_class& ciphertext_out) {
     
@@ -135,6 +175,41 @@ void pal::batch_hom_ct_pt_mul(const std::vector<mpz_class>& cts_in,
     for (size_t i = 0; i < n; i++) {
         mpz_powm_ui(cts_out[i].get_mpz_t(), cts_in[i].get_mpz_t(), pt_multipliers[i], pk.N_squared.get_mpz_t());
     }
+}
+
+void pal::batch_hom_ct_pt_mul(const std::vector<mpz_class>& cts_in,
+                             const osuCrypto::AlignedUnVector<uint64_t>& pt_multipliers, 
+                             const pk& pk,
+                             std::vector<mpz_class>& cts_out,
+                             size_t num_threads) {
+    assert(cts_in.size() == pt_multipliers.size());
+    assert(cts_out.size() == pt_multipliers.size());
+    assert(num_threads > 0);
+
+    if (num_threads == 1) {
+        batch_hom_ct_pt_mul(cts_in, pt_multipliers, pk, cts_out);
+        return;
+    }
+
+    const size_t n = cts_in.size();
+
+    boost::asio::thread_pool pool(num_threads);
+
+    size_t n_per_thread_ceil = (n + num_threads - 1) / num_threads; // Ceiling division to determine how many ciphertexts each thread should process
+
+    for (size_t i = 0; i < num_threads; i++) {
+        size_t start_idx = i * n_per_thread_ceil;
+        size_t end_idx = std::min(start_idx + n_per_thread_ceil, n); // Ensure we don't go out of bounds
+
+        boost::asio::post(pool, [start_idx, end_idx, &cts_in, &pt_multipliers, &pk, &cts_out]() {
+            for (size_t j = start_idx; j < end_idx; j++) {
+                mpz_powm_ui(cts_out[j].get_mpz_t(), cts_in[j].get_mpz_t(), pt_multipliers[j], pk.N_squared.get_mpz_t());
+            }
+        });
+    }
+
+    pool.join();
+
 }
 
 void pal::ddlog(const mpz_class& N, const mpz_class& g, mpz_class& ddlog_out) {

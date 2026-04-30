@@ -6,3 +6,6 @@ MODEXP_BENCHMARK_README.md
 src/core.*
 src/gmon.out
 src/gprof.out
+clang-src
+clang-src/CMakeLists.txt
+clang-src/CMakeLists.txt

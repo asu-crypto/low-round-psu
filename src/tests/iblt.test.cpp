@@ -11,7 +11,9 @@
 #include <gmpxx.h>
 #include "../iblt.hpp"
 #include "../u128_mod_op_utils.hpp"
+#include "ext_iblt_interface_c.h"
 #include <span>
+#include <random>
 
 using std::vector;
 using std::array;
@@ -293,6 +295,124 @@ TEST_CASE("IBLT list algorithm correctly decodes all encoded elements (threshold
 
     REQUIRE(num_retrieved_elements == num_elements_to_insert);
     REQUIRE(actual_vals == expected_vals);
+
+}
+
+TEST_CASE("clang IBLT list algorithm correctly decodes all encoded elements (threshold = 2^20, n = 2^20, mult_fact = 1.5)", "[clang_list][t=2^20][n=2^20]") {
+
+    iblt::table t;
+
+    PRNG prng(osuCrypto::toBlock(15390177776208555531ULL, 11099548744950833705ULL));
+
+    block hash_func_seed = prng.get<block>();
+
+    size_t threshold = 1 << 20; // 1 million
+
+    iblt::iblt_init(t, hash_func_seed, threshold);
+
+    size_t num_elements_to_insert = 1 << 20; // 1 million
+
+    AlignedUnVector<uint64_t> vals(num_elements_to_insert);
+    AlignedUnVector<unsigned __int128> random_counts;
+
+    prng.get<uint64_t>(vals.data(), vals.size());
+    mod_op_utils::samp_mod_spp_vec(prng, random_counts, num_elements_to_insert);
+
+    AlignedUnVector<unsigned __int128> inv_rand_times_val_vec(num_elements_to_insert);
+    for (size_t i = 0; i < num_elements_to_insert; i++) {
+        calc_inv_rand_count_times_value_mod_spp(inv_rand_times_val_vec[i], static_cast<unsigned __int128>(vals[i]), random_counts[i]);
+    }
+
+    //for (size_t i = 0; i < num_elements_to_insert; i++) {
+    //    std::cout << "Inserting element " << i << ": value = " << static_cast<uint64_t>(vals[i]) << std::endl;
+    //}
+
+    iblt::iblt_dinsert(t, vals, inv_rand_times_val_vec, random_counts);
+
+    AlignedUnVector<uint64_t> retrieved_vals(num_elements_to_insert);
+    AlignedUnVector<unsigned __int128> retrieved_counts(num_elements_to_insert);
+    size_t num_retrieved_elements;
+
+    uint64_t* u64_ptr_hash_func_seed = reinterpret_cast<uint64_t*>(&hash_func_seed);
+
+    iblt_list_c(t.ell, u64_ptr_hash_func_seed, t.sum_vec.data(), t.cnt_vec.data(), num_elements_to_insert, retrieved_vals.data(), retrieved_counts.data(), &num_retrieved_elements);
+
+    REQUIRE(num_retrieved_elements == num_elements_to_insert);
+
+    std::vector<uint64_t> expected_vals(num_elements_to_insert);
+    for (size_t i = 0; i < num_elements_to_insert; i++) {
+        expected_vals[i] = static_cast<uint64_t>(vals[i]);
+    }
+
+    std::sort(expected_vals.begin(), expected_vals.end());
+    std::vector<uint64_t> actual_vals(retrieved_vals.begin(), retrieved_vals.end());
+    std::sort(actual_vals.begin(), actual_vals.end());
+
+    REQUIRE(num_retrieved_elements == num_elements_to_insert);
+    REQUIRE(actual_vals == expected_vals);
+
+}
+
+TEST_CASE("clang IBLT list algorithm correctly decodes all encoded elements of 2^7 random IBLTs (threshold = 2^21, n = 2^21)", "[clang_list][t=2^21][n=2^21][rand_trials]") {
+
+    const size_t num_trials = 1 << 7; 
+    size_t threshold = 1 << 21; // 1 million
+    size_t num_elements_to_insert = 1 << 21; // 1 million
+
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<uint64_t> distrib(0, UINT64_MAX);
+    
+    PRNG prng(block(distrib(gen), distrib(gen)));
+
+    for (size_t trial = 0; trial < num_trials; trial++) {
+
+        iblt::table t;
+
+        block hash_func_seed = prng.get<block>();
+
+        iblt::iblt_init(t, hash_func_seed, threshold);
+
+        AlignedUnVector<uint64_t> vals(num_elements_to_insert);
+        AlignedUnVector<unsigned __int128> random_counts;
+
+        prng.get<uint64_t>(vals.data(), vals.size());
+        mod_op_utils::samp_mod_spp_vec(prng, random_counts, num_elements_to_insert);
+
+        AlignedUnVector<unsigned __int128> inv_rand_times_val_vec(num_elements_to_insert);
+        for (size_t i = 0; i < num_elements_to_insert; i++) {
+            calc_inv_rand_count_times_value_mod_spp(inv_rand_times_val_vec[i], static_cast<unsigned __int128>(vals[i]), random_counts[i]);
+        }
+
+        //for (size_t i = 0; i < num_elements_to_insert; i++) {
+        //    std::cout << "Inserting element " << i << ": value = " << static_cast<uint64_t>(vals[i]) << std::endl;
+        //}
+
+        iblt::iblt_dinsert(t, vals, inv_rand_times_val_vec, random_counts);
+
+        AlignedUnVector<uint64_t> retrieved_vals(num_elements_to_insert);
+        AlignedUnVector<unsigned __int128> retrieved_counts(num_elements_to_insert);
+        size_t num_retrieved_elements;
+
+        uint64_t* u64_ptr_hash_func_seed = reinterpret_cast<uint64_t*>(&hash_func_seed);
+
+        iblt_list_c(t.ell, u64_ptr_hash_func_seed, t.sum_vec.data(), t.cnt_vec.data(), num_elements_to_insert, retrieved_vals.data(), retrieved_counts.data(), &num_retrieved_elements);
+
+        REQUIRE(num_retrieved_elements == num_elements_to_insert);
+
+        std::vector<uint64_t> expected_vals(num_elements_to_insert);
+        for (size_t i = 0; i < num_elements_to_insert; i++) {
+            expected_vals[i] = static_cast<uint64_t>(vals[i]);
+        }
+
+        std::sort(expected_vals.begin(), expected_vals.end());
+        std::vector<uint64_t> actual_vals(retrieved_vals.begin(), retrieved_vals.end());
+        std::sort(actual_vals.begin(), actual_vals.end());
+
+        REQUIRE(num_retrieved_elements == num_elements_to_insert);
+        REQUIRE(actual_vals == expected_vals);
+
+    }
 
 }
 

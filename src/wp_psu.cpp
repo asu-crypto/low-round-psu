@@ -11,6 +11,7 @@
 #include "./u128_mod_op_utils.hpp"
 #include "./extc_mod_op_utils.h"
 #include "./rand.hpp"
+#include "ext_iblt_interface_c.h"
 
 using std::span;
 using coproto::Socket;
@@ -28,7 +29,7 @@ static constexpr size_t okvs_ssp = 40;  // Statistical security parameter, to be
 static constexpr size_t egpal_sk_exp_bitlen = 128;
 static constexpr size_t sender_party_idx = 0;
 static constexpr size_t receiver_party_idx = 1;
-static constexpr size_t num_threads_for_parallel_ops = 32; // Adjust this based on your system's capabilities.
+static constexpr size_t num_threads_for_parallel_ops = 48; // Adjust this based on your system's capabilities.
 
 /*
 static void set_mpz_from_block(const block& blk, mpz_class& result) {
@@ -333,14 +334,16 @@ static coproto::task<> gen_and_send_minv_alpha_ct_vec(size_t parties_input_set_s
 
     //enc_vec resizes alpha_ct_vec according to alpha_vec size.
     vector<eg_pal::ct> alpha_ct_vec(n);
-    eg_pal::enc_vec(egpal_sk_exp_bitlen, alpha_vec, crs, pk, priv_prng, alpha_ct_vec, num_threads_for_parallel_ops);
+    eg_pal::hss_enc_vec(egpal_sk_exp_bitlen, alpha_vec, crs, pk, priv_prng, alpha_ct_vec, num_threads_for_parallel_ops);
+    //eg_pal::enc_vec(egpal_sk_exp_bitlen, alpha_vec, crs, pk, priv_prng, alpha_ct_vec, num_threads_for_parallel_ops);
 
     AlignedUnVector<uint8_t> packed_byte_alpha_ct_vec;
     eg_pal::pack_ct_vec_as_byte_vec(crs, alpha_ct_vec, packed_byte_alpha_ct_vec); // Packing time is negligible.
 
     // enc_vec resizes alpha_ct_vec_out according to alpha_vec size.
     std::vector<eg_pal::ct> minv_alpha_ct_vec_out(n);
-    eg_pal::enc_vec(egpal_sk_exp_bitlen, minv_alpha_vec, crs, pk, priv_prng, minv_alpha_ct_vec_out, num_threads_for_parallel_ops);
+    eg_pal::hss_enc_vec(egpal_sk_exp_bitlen, minv_alpha_vec, crs, pk, priv_prng, minv_alpha_ct_vec_out, num_threads_for_parallel_ops);
+    //eg_pal::enc_vec(egpal_sk_exp_bitlen, minv_alpha_vec, crs, pk, priv_prng, minv_alpha_ct_vec_out, num_threads_for_parallel_ops);
 
     AlignedUnVector<uint8_t> packed_byte_minv_alpha_ct_vec;
     eg_pal::pack_ct_vec_as_byte_vec(crs, minv_alpha_ct_vec_out, packed_byte_minv_alpha_ct_vec); // Packing time is negligible.
@@ -646,7 +649,7 @@ coproto::task<> wp_psu::receive(const wp_psu::receiver_precomp_correlation& prec
      const size_t n = receiver_input_set.size(); // Input set size
                         
     const block ro_key = precomp.ro_key;
-    const block iblt_hash_func_seed = precomp.iblt_hash_func_seed;
+    block iblt_hash_func_seed = precomp.iblt_hash_func_seed;
 
     AlignedUnVector<uint64_t> xdt_okvs;
     block xdt_paxos_seed;
@@ -698,7 +701,18 @@ coproto::task<> wp_psu::receive(const wp_psu::receiver_precomp_correlation& prec
 
     start_time = std::chrono::high_resolution_clock::now();
 
-    iblt::iblt_list(union_iblt, 2*n, iblt_list_value_out, iblt_list_count_out, num_retrieved_elements);
+    uint64_t* u64_ptr_hash_func_seed = reinterpret_cast<uint64_t*>(&iblt_hash_func_seed);
+
+    iblt_list_c(union_iblt.ell, 
+                u64_ptr_hash_func_seed, 
+                union_iblt.sum_vec.data(), 
+                union_iblt.cnt_vec.data(), 
+                2*n,
+                iblt_list_value_out.data(),
+                iblt_list_count_out.data(),
+                &num_retrieved_elements);
+
+    //iblt::iblt_list(union_iblt, 2*n, iblt_list_value_out, iblt_list_count_out, num_retrieved_elements);
     
     //std::cout << "(Receiver) Number of elements retrieved from IBLT listing: " << num_retrieved_elements << std::endl;
     //for (size_t i = 0; i < std::min(size_t(5), num_retrieved_elements); i++) {

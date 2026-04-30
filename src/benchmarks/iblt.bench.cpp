@@ -10,6 +10,7 @@
 #include <gmpxx.h>
 #include "../u128_mod_op_utils.hpp"
 #include "../iblt.hpp"
+#include "ext_iblt_interface_c.h"
 
 using coproto::Socket;
 using osuCrypto::AlignedUnVector;
@@ -272,6 +273,59 @@ TEST_CASE("iblt::queued_iblt_list (threshold=2^21, n=2^21, mult_fac=1.5)", "[que
 
         meter.measure([&]() {
             iblt::queued_iblt_list(t, num_elements_to_insert, retrieved_vals, retrieved_counts, num_retrieved_elements);
+        });
+
+        REQUIRE(num_retrieved_elements == num_elements_to_insert);
+
+        std::vector<uint64_t> expected_vals(num_elements_to_insert);
+        for (size_t i = 0; i < num_elements_to_insert; i++) {
+            expected_vals[i] = static_cast<uint64_t>(vals[i]);
+        }
+
+        std::sort(expected_vals.begin(), expected_vals.end());
+        std::vector<uint64_t> actual_vals(retrieved_vals.begin(), retrieved_vals.end());
+        std::sort(actual_vals.begin(), actual_vals.end());
+
+        REQUIRE(actual_vals == expected_vals);
+
+    };
+}
+
+TEST_CASE("clang_iblt list (threshold=2^21, n=2^21, mult_fac=1.5)", "[clang_list][n=2^21]") {
+    BENCHMARK_ADVANCED("iblt::queued_iblt_list t=2^21 n=2^21")(Catch::Benchmark::Chronometer meter) {
+        size_t threshold = 1 << 21; // 2 million
+        size_t num_elements_to_insert = 1 << 21; // n = 2 million
+
+        iblt::table t;
+
+        PRNG prng(osuCrypto::toBlock(15390177776208555531ULL, 11099548744950833705ULL));
+
+        block hash_func_seed = prng.get<block>();
+
+        iblt::iblt_init(t, hash_func_seed, threshold);
+
+
+        AlignedUnVector<uint64_t> vals(num_elements_to_insert);
+        AlignedUnVector<unsigned __int128> random_counts(num_elements_to_insert);
+
+        prng.get<uint64_t>(vals.data(), vals.size());
+        mod_op_utils::samp_mod_spp_vec(prng, random_counts, num_elements_to_insert);
+
+        AlignedUnVector<unsigned __int128> inv_rand_times_val_vec(num_elements_to_insert);
+        for (size_t i = 0; i < num_elements_to_insert; i++) {
+            calc_inv_rand_count_times_value_mod_spp(inv_rand_times_val_vec[i], vals[i], random_counts[i]);
+        }
+
+        iblt::iblt_dinsert(t, vals, inv_rand_times_val_vec, random_counts);
+
+        AlignedUnVector<uint64_t> retrieved_vals(num_elements_to_insert);
+        AlignedUnVector<unsigned __int128> retrieved_counts(num_elements_to_insert);
+        size_t num_retrieved_elements;
+
+        uint64_t* u64_ptr_hash_func_seed = reinterpret_cast<uint64_t*>(&hash_func_seed);
+
+        meter.measure([&]() {
+            iblt_list_c(t.ell, u64_ptr_hash_func_seed, t.sum_vec.data(), t.cnt_vec.data(), num_elements_to_insert, retrieved_vals.data(), retrieved_counts.data(), &num_retrieved_elements);
         });
 
         REQUIRE(num_retrieved_elements == num_elements_to_insert);

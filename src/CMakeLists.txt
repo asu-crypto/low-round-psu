@@ -79,6 +79,13 @@ set_source_files_properties(${CMAKE_SOURCE_DIR}/extc_mod_op_utils.c
     COMPILE_FLAGS "-std=c23 -O3 -march=native -ftree-vectorize -ffast-math -finline-functions -funroll-loops -flto"
 )
 
+add_library(iblt_interface STATIC IMPORTED)
+set_target_properties(iblt_interface PROPERTIES
+    IMPORTED_LOCATION "${CMAKE_SOURCE_DIR}/clang-src/build/libiblt_interface.a"
+    INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_SOURCE_DIR}/clang-src"
+    INTERFACE_COMPILE_DEFINITIONS "USE_C_INTERFACE"
+)
+
 set(HEADERS
   ${CMAKE_SOURCE_DIR}/utils.hpp
   ${CMAKE_SOURCE_DIR}/rand.hpp
@@ -147,8 +154,10 @@ if(BUILD_TESTS)
         set_target_properties(${target} PROPERTIES CXX_EXTENSIONS ON)
         target_compile_features(${target} PUBLIC cxx_std_20)
         target_compile_options(${target} PRIVATE ${DEFAULT_COMPILER_OPTIONS_AND_WARNINGS})
-        target_link_libraries(${target} PRIVATE Catch2::Catch2WithMain visa::volePSI oc::cryptoTools ${GMP_LIBRARIES} ${GMPXX_LIBRARIES} coproto::coproto)
+        target_link_libraries(${target} PRIVATE Catch2::Catch2WithMain visa::volePSI oc::cryptoTools ${GMP_LIBRARIES} ${GMPXX_LIBRARIES} coproto::coproto iblt_interface)
         target_include_directories(${target} PRIVATE ${GMP_INCLUDE_DIR})
+        set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+
         #target_compile_options(${target} PRIVATE ${GMP_CFLAGS_OTHER})
 
         add_test(NAME ${target} COMMAND ${target})
@@ -194,7 +203,7 @@ if(BUILD_BENCH)
         set_target_properties(${target} PROPERTIES CXX_EXTENSIONS ON)
         target_compile_features(${target} PUBLIC cxx_std_20)
         target_compile_options(${target} PRIVATE ${DEFAULT_COMPILER_OPTIONS_AND_WARNINGS})
-        target_link_libraries(${target} PRIVATE Catch2::Catch2WithMain visa::volePSI coproto::coproto ${GMP_LIBRARIES} ${GMPXX_LIBRARIES})
+        target_link_libraries(${target} PRIVATE Catch2::Catch2WithMain visa::volePSI coproto::coproto ${GMP_LIBRARIES} ${GMPXX_LIBRARIES} iblt_interface)
         set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
 
         add_test(NAME ${target} COMMAND ${target})
@@ -214,7 +223,7 @@ if(BUILD_PROFILING_EXECUTABLES)
 
   foreach(target ${ALL_PROFILING_EXECUTABLES})
       add_executable(${target} ${PROFILING_SOURCE_PREFIX}/${target}.cpp ${SOURCES})
-      target_link_libraries(${target} visa::volePSI coproto::coproto xxhash unordered_dense::unordered_dense)
+      target_link_libraries(${target} visa::volePSI coproto::coproto xxhash unordered_dense::unordered_dense iblt_interface)
       set_property(TARGET ${target} PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
   endforeach()
 endif()

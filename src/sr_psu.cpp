@@ -87,9 +87,11 @@ static coproto::task<> receive_encrypted_iblt(size_t input_set_size,
 static void comp_sender_iblt_ss(const pal::pk& pk,
                                 const pal::sk_share& sk_share,
                                 mpz_iblt::table& enc_tab, 
-                                mpz_iblt::table& pt_tab_in_ss_tab_out) {
+                                mpz_iblt::table& pt_tab_in_ss_tab_out,
+                                size_t num_threads_for_parallel_ops) {
     assert(enc_tab.sum_vec.size() == pt_tab_in_ss_tab_out.sum_vec.size());
     assert(enc_tab.cnt_vec.size() == pt_tab_in_ss_tab_out.cnt_vec.size());
+    assert(num_threads_for_parallel_ops > 0);
     
     std::cout << "(S) Doing distributed decryption of sender IBLT..." << std::endl;
 
@@ -97,8 +99,8 @@ static void comp_sender_iblt_ss(const pal::pk& pk,
 
     try {
 
-        pal::distrib_dec_vec(0, pk, sk_share, enc_tab.sum_vec, enc_tab.sum_vec);
-        pal::distrib_dec_vec(0, pk, sk_share, enc_tab.cnt_vec, enc_tab.cnt_vec);
+        pal::distrib_dec_vec(0, pk, sk_share, enc_tab.sum_vec, enc_tab.sum_vec, num_threads_for_parallel_ops);
+        pal::distrib_dec_vec(0, pk, sk_share, enc_tab.cnt_vec, enc_tab.cnt_vec, num_threads_for_parallel_ops);
 
     } catch (const std::exception& e) {
         std::cerr << "(S) Error during distributed decryption of sender IBLT: " << e.what() << std::endl;
@@ -134,14 +136,17 @@ static coproto::task<> send_iblt_ss(const pal::pk& pk,
 static coproto::task<> receive_and_reconstruct_iblt(const pal::pk& pk,  
                                                     const pal::sk_share& sk_share,
                                                     mpz_iblt::table& enc_iblt_in_pt_iblt_out,
-                                                    coproto::Socket& sock) {
+                                                    coproto::Socket& sock,
+                                                    size_t num_threads_for_parallel_ops) {
+    assert(num_threads_for_parallel_ops > 0);
+
     const size_t tab_len = enc_iblt_in_pt_iblt_out.sum_vec.size();
 
     vector<mpz_class>& enc_sum_vec = enc_iblt_in_pt_iblt_out.sum_vec;
     vector<mpz_class>& enc_cnt_vec = enc_iblt_in_pt_iblt_out.cnt_vec;
 
-    pal::distrib_dec_vec(1, pk, sk_share, enc_sum_vec, enc_sum_vec);
-    pal::distrib_dec_vec(1, pk, sk_share, enc_cnt_vec, enc_cnt_vec);
+    pal::distrib_dec_vec(1, pk, sk_share, enc_sum_vec, enc_sum_vec, num_threads_for_parallel_ops);
+    pal::distrib_dec_vec(1, pk, sk_share, enc_cnt_vec, enc_cnt_vec, num_threads_for_parallel_ops);
 
     AlignedUnVector<uint8_t> packed_sum_vec, packed_cnt_vec;
     co_await sock.recvResize(packed_sum_vec);
@@ -172,8 +177,10 @@ coproto::task<> sr_psu::receive(const AlignedUnVector<uint64_t>& receiver_input_
                         const pal::sk_share& sk_share1, 
                         PRNG& receiver_priv_prg,
                         coproto::Socket& sock,
-                        std::vector<uint64_t>& union_out) {
+                        std::vector<uint64_t>& union_out,
+                        size_t num_threads_for_parallel_ops) {
     assert(!receiver_input_set.empty());
+    assert(num_threads_for_parallel_ops > 0);
     
     const size_t n = receiver_input_set.size();
 
@@ -183,14 +190,12 @@ coproto::task<> sr_psu::receive(const AlignedUnVector<uint64_t>& receiver_input_
     std::cout << "(R) Samples ct_alphav" << std::endl;
 
     std::vector<mpz_class> ct_ai_times_xi(n);
-    pal::batch_hom_ct_pt_mul(ct_alphav, receiver_input_set, pk, ct_ai_times_xi); // Homomorphically computes the C_{\alpha_i*x_i} ciphertexts.
+    pal::batch_hom_ct_pt_mul(ct_alphav, receiver_input_set, pk, ct_ai_times_xi, num_threads_for_parallel_ops); // Homomorphically computes the C_{\alpha_i*x_i} ciphertexts.
 
     std::cout << "(R) Computed ct_ai_times_xi" << std::endl;
 
     block iblt_hash_func_seed = receiver_priv_prg.get<block>();
     std::cout << "(R) Sampled iblt_hash_func_seed" << std::endl;
-
-    
 
     mpz_iblt::table enc_tab;
     mpz_iblt::prod_init(2*n, iblt_hash_func_seed, enc_tab);
@@ -205,7 +210,7 @@ coproto::task<> sr_psu::receive(const AlignedUnVector<uint64_t>& receiver_input_
 
     std::cout << "(R) Sent encrypted IBLT" << std::endl;
 
-    co_await receive_and_reconstruct_iblt(pk, sk_share1, enc_tab, sock);
+    co_await receive_and_reconstruct_iblt(pk, sk_share1, enc_tab, sock, num_threads_for_parallel_ops);
 
     std::cout << "(R) Received and reconstructed IBLT" << std::endl;
 
@@ -225,9 +230,11 @@ coproto::task<> sr_psu::send(const AlignedUnVector<uint64_t>& sender_input_set,
                              const pal::pk& pk, 
                              const pal::sk_share& sk_share0, 
                              PRNG& sender_priv_prg,
-                             Socket& sock) {
+                             Socket& sock,
+                             size_t num_threads_for_parallel_ops) {
 
     assert(!sender_input_set.empty());
+    assert(num_threads_for_parallel_ops > 0);
 
     const size_t n = sender_input_set.size();
 
@@ -254,7 +261,7 @@ coproto::task<> sr_psu::send(const AlignedUnVector<uint64_t>& sender_input_set,
 
     std::cout << "(S) Inserted elements into plaintext IBLT" << std::endl;
     
-    comp_sender_iblt_ss(pk, sk_share0, enc_tab, pt_tab);
+    comp_sender_iblt_ss(pk, sk_share0, enc_tab, pt_tab, num_threads_for_parallel_ops);
     
     std::cout << "(S) Computed sender IBLT secret shares" << std::endl;
 

@@ -28,12 +28,14 @@ namespace sr_psu {
                             const pal::sk_share& sk_share1, 
                             osuCrypto::PRNG& receiver_priv_prg,
                             coproto::Socket& sock,
-                            std::vector<uint64_t>& union_out);
+                            std::vector<uint64_t>& union_out,
+                            size_t num_threads_for_parallel_ops = 1);
 
     coproto::task<> send(const osuCrypto::AlignedUnVector<uint64_t>& sender_input_set,
                          const pal::pk& pk, 
                          const pal::sk_share& sk_share0, 
                          osuCrypto::PRNG& sender_priv_prg,
-                         coproto::Socket& sock);
+                         coproto::Socket& sock,
+                         size_t num_threads_for_parallel_ops = 1);
     
 }

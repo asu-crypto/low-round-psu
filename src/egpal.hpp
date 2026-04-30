@@ -57,6 +57,12 @@ namespace eg_pal {
     void enc_vec(size_t sk_exp_bitlen, const osuCrypto::AlignedUnVector<unsigned __int128>& plaintext_vec, const crs& crs, const pk& pk, osuCrypto::PRNG& prg, std::vector<ct>& ciphertext_vec_out);
     void enc_vec(size_t sk_exp_bitlen, std::span<unsigned __int128> plaintext_vec, const crs& crs, const pk& pk, osuCrypto::PRNG& prg, std::span<ct> ciphertext_vec_out);
 
+    void hss_enc_vec(size_t sk_exp_bitlen, 
+                     const osuCrypto::AlignedUnVector<unsigned __int128>& plaintext_vec, 
+                     const crs& crs, 
+                     const pk& pk, 
+                     osuCrypto::PRNG& prg, 
+                     std::vector<ct>& ciphertext_vec_out);
 
     void enc_vec(size_t sk_exp_bitlen, 
                  const osuCrypto::AlignedUnVector<unsigned __int128>& plaintext_vec, 
@@ -65,6 +71,14 @@ namespace eg_pal {
                  osuCrypto::PRNG& prg, 
                  std::vector<ct>& ciphertext_vec_out, 
                  size_t num_threads);
+
+    void hss_enc_vec(size_t sk_exp_bitlen, 
+                     const osuCrypto::AlignedUnVector<unsigned __int128>& plaintext_vec, 
+                     const crs& crs, 
+                     const pk& pk, 
+                     osuCrypto::PRNG& prg, 
+                     std::vector<ct>& ciphertext_vec_out,
+                     size_t num_threads);
 
 
     void distrib_dec(size_t party_idx, const ct& ciphertext, const sk_share& share, const crs& crs, const pk& pk, mpz_class& plaintext_share_out);

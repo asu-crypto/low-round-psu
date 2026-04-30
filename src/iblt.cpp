@@ -186,7 +186,6 @@ inline void iblt_del(iblt::table& t, uint64_t key, unsigned __int128 value, unsi
         
         mod_op_utils::mod_spp_sub(t.cnt_vec[idx], count);
         mod_op_utils::mod_spp_sub(t.sum_vec[idx], value);
-
     }
 
 }

@@ -175,14 +175,18 @@ void eg_pal::enc_vec(size_t sk_exp_bitlen,
         size_t start_idx = i * n_pts_per_thread_ceil;
         size_t end_idx = std::min(start_idx + n_pts_per_thread_ceil, vec_size); // Ensure we don't go out of bounds
 
-        span<unsigned __int128> pt_span(&plaintext_vec[start_idx], end_idx - start_idx);
-        span<ct> ct_span(&ciphertext_vec_out[start_idx], end_idx - start_idx);
+        //span<unsigned __int128> pt_span(&plaintext_vec[start_idx], end_idx - start_idx);
+        //span<ct> ct_span(&ciphertext_vec_out[start_idx], end_idx - start_idx);
         block thread_prg_seed = prg.get<block>();
 
-        boost::asio::post(pool, [sk_exp_bitlen, &crs, &pk, thread_prg_seed, pt_span, ct_span]() {
+        boost::asio::post(pool, [sk_exp_bitlen, start_idx, end_idx, &crs, &pk, thread_prg_seed, &plaintext_vec, &ciphertext_vec_out]() {
             osuCrypto::PRNG thread_prg(thread_prg_seed);
 
-            enc_vec(sk_exp_bitlen, pt_span, crs, pk, thread_prg, ct_span);
+            for (size_t j = start_idx; j < end_idx; j++) {
+                enc(sk_exp_bitlen, plaintext_vec[j], crs, pk, thread_prg, ciphertext_vec_out[j]);
+            }
+
+            //enc_vec(sk_exp_bitlen, pt_span, crs, pk, thread_prg, ct_span);
         });
     }
 
@@ -437,6 +441,110 @@ static void hss_ct_rerand(size_t subset_size, const eg_pal::crs& crs, const vect
 
 }
 
+void eg_pal::hss_enc_vec(size_t sk_exp_bitlen, 
+                         const osuCrypto::AlignedUnVector<unsigned __int128>& plaintext_vec, 
+                         const crs& crs, 
+                         const pk& pk, 
+                         osuCrypto::PRNG& prg, 
+                         std::vector<ct>& ciphertext_vec_out) {
+    assert(plaintext_vec.size() == ciphertext_vec_out.size()); // Ensure the output vector has the same size as the input vector
+    assert(sk_exp_bitlen > 0);
+    
+    const size_t vec_size = plaintext_vec.size();
+
+    size_t hidden_set_size, subset_size;
+    get_hidden_subset_sum_params(vec_size, hidden_set_size, subset_size);
+
+    vector<ct> hidden_set(hidden_set_size);
+
+    // Samples hidden set ciphertexts.
+    for (size_t i = 0; i < hidden_set_size; i++) {
+        enc(sk_exp_bitlen, 0, crs, pk, prg, hidden_set[i]);
+    }
+
+    for (size_t i = 0; i < vec_size; i++) {
+        ct& ct_i = ciphertext_vec_out[i];
+
+        mpz_set_ui(ct_i.g_pow_r.get_mpz_t(), 1);
+        mpz_set_ui(ct_i.msg_term.get_mpz_t(), 1);
+
+        mpz_t plaintext_read_only_mpz;
+        mpz_roinit_n(plaintext_read_only_mpz, reinterpret_cast<const mp_limb_t*>(&plaintext_vec[i]), 2);
+
+        // ct.msg_term = 1 + m*N. This is equivalent to (N+1)^m over mod N^2, but it is more efficient to compute.
+        mpz_addmul(ct_i.msg_term.get_mpz_t(), crs.N.get_mpz_t(), plaintext_read_only_mpz);
+
+        hss_ct_rerand(subset_size, crs, hidden_set, prg, ct_i);
+    }
+
+}
+
+void eg_pal::hss_enc_vec(size_t sk_exp_bitlen, 
+                         const osuCrypto::AlignedUnVector<unsigned __int128>& plaintext_vec, 
+                         const crs& crs, 
+                         const pk& pk, 
+                         osuCrypto::PRNG& prg, 
+                         std::vector<ct>& ciphertext_vec_out,
+                         size_t num_threads) {
+    assert(plaintext_vec.size() == ciphertext_vec_out.size()); // Ensure the output vector has the same size as the input vector
+    assert(sk_exp_bitlen > 0);
+    assert(num_threads > 0);
+
+    if (num_threads == 1) {
+        hss_enc_vec(sk_exp_bitlen, plaintext_vec, crs, pk, prg, ciphertext_vec_out);
+        return;
+    }
+
+    const size_t vec_size = ciphertext_vec_out.size();
+
+    size_t hidden_set_size, subset_size;
+    get_hidden_subset_sum_params(ciphertext_vec_out.size(), hidden_set_size, subset_size);
+
+    vector<ct> hidden_set(hidden_set_size);
+
+    AlignedUnVector<unsigned __int128> plaintext_zero_vec(hidden_set_size);
+    std::memset(plaintext_zero_vec.data(), 0, plaintext_zero_vec.size() * sizeof(unsigned __int128));
+
+    enc_vec(sk_exp_bitlen, plaintext_zero_vec, crs, pk, prg, hidden_set, num_threads); // Sample hidden set ciphertexts in parallel
+
+    boost::asio::thread_pool pool(num_threads);
+
+    size_t n_cts_per_thread_ceil = (vec_size + num_threads - 1) / num_threads; // Ceiling division to determine how many ciphertexts each thread should process per round
+
+    for (size_t i = 0; i < num_threads; i++) {
+        size_t start_idx = i * n_cts_per_thread_ceil;
+        size_t end_idx = std::min(start_idx + n_cts_per_thread_ceil, vec_size); // Ensure we don't go out of bounds
+
+        block thread_prg_seed = prg.get<block>();
+
+        span<unsigned __int128> pt_span(&plaintext_vec[start_idx], end_idx - start_idx);
+        span<ct> ct_span(&ciphertext_vec_out[start_idx], end_idx - start_idx);
+
+        boost::asio::post(pool, [&crs, &hidden_set, thread_prg_seed, subset_size, pt_span, ct_span]() {
+            osuCrypto::PRNG thread_prg(thread_prg_seed);
+
+            for (size_t i = 0; i < ct_span.size(); i++) {
+                ct& ct_i = ct_span[i];
+
+                mpz_set_ui(ct_i.g_pow_r.get_mpz_t(), 1);
+                mpz_set_ui(ct_i.msg_term.get_mpz_t(), 1);
+
+                mpz_t plaintext_read_only_mpz;
+                mpz_roinit_n(plaintext_read_only_mpz, reinterpret_cast<const mp_limb_t*>(&pt_span[i]), 2);
+
+                // ct.msg_term = 1 + m*N. This is equivalent to (N+1)^m over mod N^2, but it is more efficient to compute.
+                mpz_addmul(ct_i.msg_term.get_mpz_t(), crs.N.get_mpz_t(), plaintext_read_only_mpz);
+
+                hss_ct_rerand(subset_size, crs, hidden_set, thread_prg, ct_i);
+            }
+            
+        });
+    }
+
+    pool.join();
+
+}
+
 void eg_pal::hss_ctv_rerand(size_t sk_exp_bitlen, const crs& crs, const pk& pk, osuCrypto::PRNG& prg, std::vector<ct>& ciphertext_vec_in_out) {
     
     const size_t ct_vec_size = ciphertext_vec_in_out.size();
@@ -472,9 +580,7 @@ void eg_pal::hss_ctv_rerand(size_t sk_exp_bitlen, const crs& crs, const pk& pk, 
     vector<ct> hidden_set(hidden_set_size);
 
     AlignedUnVector<unsigned __int128> plaintext_zero_vec(hidden_set_size);
-    for (size_t i = 0; i < hidden_set_size; i++) {
-        plaintext_zero_vec[i] = 0;
-    }
+    std::memset(plaintext_zero_vec.data(), 0, plaintext_zero_vec.size() * sizeof(unsigned __int128));
 
     auto start_time = std::chrono::high_resolution_clock::now();
 

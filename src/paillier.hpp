@@ -6,6 +6,7 @@
 #include <array>
 #include "cryptoTools/Crypto/PRNG.h"
 #include "cryptoTools/Common/Aligned.h"
+#include <span>
 
 namespace pal {
 
@@ -43,6 +44,9 @@ namespace pal {
     void decrypt(const pk& pk, const sk& sk, const mpz_class& ciphertext, mpz_class& plaintext_out);
     void distrib_dec(size_t party_idx, const pk& pk, const sk_share& sk_share, const mpz_class& ct, mpz_class& adss);
     void distrib_dec_vec(size_t party_idx, const pk& pk, const sk_share& sk_share, const std::vector<mpz_class>& ct_vec, std::vector<mpz_class>& adss_vec);
+    void distrib_dec_vec(size_t party_idx, const pk& pk, const sk_share& sk_share, std::span<mpz_class>& ct_vec, std::span<mpz_class>& adss_vec);
+
+    void distrib_dec_vec(size_t party_idx, const pk& pk, const sk_share& sk_share, const std::vector<mpz_class>& ct_vec, std::vector<mpz_class>& adss_vec, size_t num_threads);
 
     void hom_ct_add(const mpz_class& ct0, const mpz_class& ct1, const pk& pk, mpz_class& ct_sum_out);
     // This function does the same has hom_ct_add but stores the result in ct0_and_out to save memory. ct1 is not modified.
@@ -55,6 +59,12 @@ namespace pal {
                              const osuCrypto::AlignedUnVector<uint64_t>& pt_multipliers, 
                              const pk& pk,
                              std::vector<mpz_class>& cts_out);
+
+    void batch_hom_ct_pt_mul(const std::vector<mpz_class>& cts_in,
+                             const osuCrypto::AlignedUnVector<uint64_t>& pt_multipliers, 
+                             const pk& pk,
+                             std::vector<mpz_class>& cts_out,
+                             size_t num_threads);
 
     void ddlog(const mpz_class& N, const mpz_class& g, mpz_class& ddlog_out);
 

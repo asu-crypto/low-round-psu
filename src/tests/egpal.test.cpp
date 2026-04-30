@@ -83,6 +83,82 @@ TEST_CASE("Test EG-PAL enc_vec and distrib_dec_vec","[enc][distrib-dec]") {
 
 }
 
+TEST_CASE("Test EG-PAL hss_enc_vec for n=2^12 encryptions","[hss_enc_vec][n=2^12]") {
+    size_t n = 1 << 12;
+
+    PRNG prng(osuCrypto::toBlock(15390177726248555531ULL, 11119544744950832505ULL));
+    size_t sk_exp_bitlen = 128; 
+
+    size_t blum_int_bitlen = 1 << 10; // Bit length of Blum integers
+    size_t miller_rabin_rounds_per_prime = 40; // Miller-Rabin rounds for primality testing
+    size_t stat_sec_param = 40; // Statistical security parameter
+
+    eg_pal::crs crs;
+    eg_pal::pk pk;
+    eg_pal::sk_share share0, share1;
+
+    eg_pal::gen_crs(blum_int_bitlen, miller_rabin_rounds_per_prime, prng, crs);
+
+    eg_pal::distrib_keygen(sk_exp_bitlen, stat_sec_param, crs, prng, pk, share0, share1);
+
+    osuCrypto::AlignedUnVector<unsigned __int128> pt_vec(n);
+    prng.get<unsigned __int128>(pt_vec.data(), pt_vec.size());
+
+    vector<eg_pal::ct> ct_vec(n);
+    eg_pal::hss_enc_vec(sk_exp_bitlen, pt_vec, crs, pk, prng, ct_vec);
+
+    vector<mpz_class> pt_share_vec_out0(n), pt_share_vec_out1(n);
+    eg_pal::distrib_dec_vec(0, crs, pk, share0, ct_vec, pt_share_vec_out0);
+    eg_pal::distrib_dec_vec(1, crs, pk, share1, ct_vec, pt_share_vec_out1);
+
+    for (size_t i = 0; i < n; i++) {
+        mpz_class decrypted_plaintext;
+        mpz_sub(decrypted_plaintext.get_mpz_t(), pt_share_vec_out1[i].get_mpz_t(), pt_share_vec_out0[i].get_mpz_t());
+        mpz_mod(decrypted_plaintext.get_mpz_t(), decrypted_plaintext.get_mpz_t(), crs.N.get_mpz_t());
+
+        REQUIRE(decrypted_plaintext.get_ui() == static_cast<uint64_t>(pt_vec[i]));
+    }
+
+}
+
+TEST_CASE("Test EG-PAL parallel hss_enc_vec for n=2^12 encryptions","[hss_enc_vec][n=2^12][parallel]") {
+    size_t n = 1 << 12;
+
+    PRNG prng(osuCrypto::toBlock(15390177726248555531ULL, 11119544744950832505ULL));
+    size_t sk_exp_bitlen = 128; 
+
+    size_t blum_int_bitlen = 1 << 10; // Bit length of Blum integers
+    size_t miller_rabin_rounds_per_prime = 40; // Miller-Rabin rounds for primality testing
+    size_t stat_sec_param = 40; // Statistical security parameter
+
+    eg_pal::crs crs;
+    eg_pal::pk pk;
+    eg_pal::sk_share share0, share1;
+
+    eg_pal::gen_crs(blum_int_bitlen, miller_rabin_rounds_per_prime, prng, crs);
+
+    eg_pal::distrib_keygen(sk_exp_bitlen, stat_sec_param, crs, prng, pk, share0, share1);
+
+    osuCrypto::AlignedUnVector<unsigned __int128> pt_vec(n);
+    prng.get<unsigned __int128>(pt_vec.data(), pt_vec.size());
+
+    vector<eg_pal::ct> ct_vec(n);
+    eg_pal::hss_enc_vec(sk_exp_bitlen, pt_vec, crs, pk, prng, ct_vec, 2);
+
+    vector<mpz_class> pt_share_vec_out0(n), pt_share_vec_out1(n);
+    eg_pal::distrib_dec_vec(0, crs, pk, share0, ct_vec, pt_share_vec_out0);
+    eg_pal::distrib_dec_vec(1, crs, pk, share1, ct_vec, pt_share_vec_out1);
+
+    for (size_t i = 0; i < n; i++) {
+        mpz_class decrypted_plaintext;
+        mpz_sub(decrypted_plaintext.get_mpz_t(), pt_share_vec_out1[i].get_mpz_t(), pt_share_vec_out0[i].get_mpz_t());
+        mpz_mod(decrypted_plaintext.get_mpz_t(), decrypted_plaintext.get_mpz_t(), crs.N.get_mpz_t());
+
+        REQUIRE(decrypted_plaintext.get_ui() == static_cast<uint64_t>(pt_vec[i]));
+    }
+
+}
+
 TEST_CASE("Test EG-PAL parallel distrib_dec_vec","[distrib-dec][parallel][t=1]") {
     const size_t n = 100;
     const size_t num_threads = 1;

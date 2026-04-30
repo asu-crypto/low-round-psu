@@ -235,6 +235,70 @@ TEST_CASE("batch_hom_ct_pt_mul correctly homomorphically multiplies a batch of c
 
 }
 
+TEST_CASE("batch_hom_ct_pt_mul correctly homomorphically multiplies a batch of ciphertexts by their corresponding plaintexts using t=2 threads", "[paillier][batch_hom_ct_pt_mul][t=2][parallel]") {
+
+    const size_t num_cts = 13;
+    const size_t num_threads = 2;
+
+    auto prg = PRNG(osuCrypto::toBlock(8249415477447070636ULL, 5019291205146497986ULL));
+    const size_t blum_int_bitlen = 1024;
+    const size_t miller_rabin_rounds_per_prime = 40;
+
+    pal::sk sk;
+    pal::pk pk;
+    pal::keygen(blum_int_bitlen, miller_rabin_rounds_per_prime, prg, sk, pk);
+
+    AlignedUnVector<uint64_t> pts(num_cts);
+    prg.get<uint64_t>(pts.data(), pts.size());
+
+    vector<mpz_class> ct_pts(num_cts);
+    vector<mpz_class> cts(num_cts);
+    for (size_t i = 0; i < num_cts; ++i) {
+        gen_sbias_rand_int_mod_n(pk.N, prg, ct_pts[i]);
+        pal::encrypt(pk, ct_pts[i], prg, cts[i]);
+    }
+    pal::batch_hom_ct_pt_mul(cts, pts, pk, cts, num_threads);
+
+    for (size_t i = 0; i < num_cts; ++i) {
+        mpz_class decrypted_product;
+        pal::decrypt(pk, sk, cts[i], decrypted_product);
+        REQUIRE(decrypted_product == (ct_pts[i] * pts[i]) % pk.N);
+    }
+
+}
+
+TEST_CASE("batch_hom_ct_pt_mul correctly homomorphically multiplies a batch of ciphertexts by their corresponding plaintexts using t=3 threads", "[paillier][batch_hom_ct_pt_mul][t=3][parallel]") {
+
+    const size_t num_cts = 13;
+    const size_t num_threads = 3;
+
+    auto prg = PRNG(osuCrypto::toBlock(8249415477447070636ULL, 5019291205146497986ULL));
+    const size_t blum_int_bitlen = 1024;
+    const size_t miller_rabin_rounds_per_prime = 40;
+
+    pal::sk sk;
+    pal::pk pk;
+    pal::keygen(blum_int_bitlen, miller_rabin_rounds_per_prime, prg, sk, pk);
+
+    AlignedUnVector<uint64_t> pts(num_cts);
+    prg.get<uint64_t>(pts.data(), pts.size());
+
+    vector<mpz_class> ct_pts(num_cts);
+    vector<mpz_class> cts(num_cts);
+    for (size_t i = 0; i < num_cts; ++i) {
+        gen_sbias_rand_int_mod_n(pk.N, prg, ct_pts[i]);
+        pal::encrypt(pk, ct_pts[i], prg, cts[i]);
+    }
+    pal::batch_hom_ct_pt_mul(cts, pts, pk, cts, num_threads);
+
+    for (size_t i = 0; i < num_cts; ++i) {
+        mpz_class decrypted_product;
+        pal::decrypt(pk, sk, cts[i], decrypted_product);
+        REQUIRE(decrypted_product == (ct_pts[i] * pts[i]) % pk.N);
+    }
+
+}
+
 TEST_CASE("distrib_dec_vec correctly performs distributed decryption on a vector of ciphertexts", "[paillier][distrib_dec_vec]") {
 
     const size_t num_cts = 17;
@@ -260,6 +324,78 @@ TEST_CASE("distrib_dec_vec correctly performs distributed decryption on a vector
 
     pal::distrib_dec_vec(0, pk, sk_ss0, cts, ct_ss0);
     pal::distrib_dec_vec(1, pk, sk_ss1, cts, ct_ss1);
+    for (size_t i = 0; i < num_cts; ++i) {
+        mpz_class reconstructed_pt;
+        mpz_add(reconstructed_pt.get_mpz_t(), ct_ss0[i].get_mpz_t(), ct_ss1[i].get_mpz_t());
+        reconstructed_pt %= pk.N;
+        REQUIRE(reconstructed_pt == ct_pts[i]);
+    }
+
+
+}
+
+TEST_CASE("distrib_dec_vec correctly performs distributed decryption on a vector of ciphertexts using t=2 threads", "[paillier][distrib_dec_vec][t=2][parallel]") {
+
+    const size_t num_cts = 17;
+    const size_t num_threads = 2;
+
+    auto prg = PRNG(osuCrypto::toBlock(8249415477447070636ULL, 5019291205146497986ULL));
+    const size_t blum_int_bitlen = 1024;
+    const size_t miller_rabin_rounds_per_prime = 40;
+    const size_t stat_sec_param = 40;
+
+    pal::sk_share sk_ss0, sk_ss1;
+    pal::pk pk;
+    pal::distrib_keygen(blum_int_bitlen, miller_rabin_rounds_per_prime, stat_sec_param, prg, pk, sk_ss0, sk_ss1);
+
+    vector<mpz_class> ct_pts(num_cts);
+    vector<mpz_class> cts(num_cts);
+    for (size_t i = 0; i < num_cts; ++i) {
+        gen_sbias_rand_int_mod_n(pk.N, prg, ct_pts[i]);
+        pal::encrypt(pk, ct_pts[i], prg, cts[i]);
+    }
+    
+    vector<mpz_class> ct_ss0(num_cts);
+    vector<mpz_class> ct_ss1(num_cts);
+
+    pal::distrib_dec_vec(0, pk, sk_ss0, cts, ct_ss0, num_threads);
+    pal::distrib_dec_vec(1, pk, sk_ss1, cts, ct_ss1, num_threads);
+    for (size_t i = 0; i < num_cts; ++i) {
+        mpz_class reconstructed_pt;
+        mpz_add(reconstructed_pt.get_mpz_t(), ct_ss0[i].get_mpz_t(), ct_ss1[i].get_mpz_t());
+        reconstructed_pt %= pk.N;
+        REQUIRE(reconstructed_pt == ct_pts[i]);
+    }
+
+
+}
+
+TEST_CASE("distrib_dec_vec correctly performs distributed decryption on a vector of ciphertexts using t=3 threads", "[paillier][distrib_dec_vec][t=3][parallel]") {
+
+    const size_t num_cts = 17;
+    const size_t num_threads = 3;
+
+    auto prg = PRNG(osuCrypto::toBlock(8249415477447070636ULL, 5019291205146497986ULL));
+    const size_t blum_int_bitlen = 1024;
+    const size_t miller_rabin_rounds_per_prime = 40;
+    const size_t stat_sec_param = 40;
+
+    pal::sk_share sk_ss0, sk_ss1;
+    pal::pk pk;
+    pal::distrib_keygen(blum_int_bitlen, miller_rabin_rounds_per_prime, stat_sec_param, prg, pk, sk_ss0, sk_ss1);
+
+    vector<mpz_class> ct_pts(num_cts);
+    vector<mpz_class> cts(num_cts);
+    for (size_t i = 0; i < num_cts; ++i) {
+        gen_sbias_rand_int_mod_n(pk.N, prg, ct_pts[i]);
+        pal::encrypt(pk, ct_pts[i], prg, cts[i]);
+    }
+    
+    vector<mpz_class> ct_ss0(num_cts);
+    vector<mpz_class> ct_ss1(num_cts);
+
+    pal::distrib_dec_vec(0, pk, sk_ss0, cts, ct_ss0, num_threads);
+    pal::distrib_dec_vec(1, pk, sk_ss1, cts, ct_ss1, num_threads);
     for (size_t i = 0; i < num_cts; ++i) {
         mpz_class reconstructed_pt;
         mpz_add(reconstructed_pt.get_mpz_t(), ct_ss0[i].get_mpz_t(), ct_ss1[i].get_mpz_t());

@@ -36,6 +36,31 @@ static std::string to_string_u128(unsigned __int128 value) {
     return digits;
 }
 
+static void gen_rand_input_sets(PRNG& prng, 
+                                size_t n, 
+                                size_t size_interec, 
+                                AlignedUnVector<block>& sender_input_set, 
+                                AlignedUnVector<block>& receiver_input_set) {
+    sender_input_set.resize(n);
+    receiver_input_set.resize(n);
+
+    for (size_t i = 0; i < n; ++i) {
+        sender_input_set[i] = block(0, prng.get<uint64_t>());
+    }
+
+    for (size_t i = 0; i < size_interec; ++i) {
+        receiver_input_set[i] = sender_input_set[i];
+    }
+
+    for (size_t i = size_interec; i < n; ++i) {
+        receiver_input_set[i] = block(0, prng.get<uint64_t>());
+    }
+
+    std::shuffle(sender_input_set.begin(), sender_input_set.end(), prng);
+    std::shuffle(receiver_input_set.begin(), receiver_input_set.end(), prng);
+
+}
+
 TEST_CASE("wp_psu preprocessing phase with n=5 input set sizes", "[wp_psu][preprocess][n=5]") {
 
     size_t input_set_size = 5; // n = 5
@@ -95,7 +120,7 @@ TEST_CASE("wp_psu preprocessing phase with n=5 input set sizes", "[wp_psu][prepr
         mod_op_utils::mod_spp_sub(reconstructed_iblt.cnt_vec[i], sender_precomp.e_vec[i]);
     }
 
-    size_t max_num_retrieved_elements = input_set_size;
+    size_t max_num_retrieved_elements = 2*input_set_size;
     size_t num_retrieved_elements;
     AlignedUnVector<uint64_t> retrieved_vals(max_num_retrieved_elements);
     AlignedUnVector<unsigned __int128> retrieved_counts(max_num_retrieved_elements);
@@ -105,6 +130,7 @@ TEST_CASE("wp_psu preprocessing phase with n=5 input set sizes", "[wp_psu][prepr
 
     REQUIRE(num_retrieved_elements == input_set_size);
 
+    retrieved_vals.resize(num_retrieved_elements);
     std::sort(retrieved_vals.begin(), retrieved_vals.end());
     std::sort(receiver_precomp.w_vec.begin(), receiver_precomp.w_vec.end());
 
@@ -477,7 +503,9 @@ TEST_CASE("wp_psu online phase with n=32 input set sizes", "[wp_psu][online][n=3
 }
 
 TEST_CASE("wp_psu online phase with n=2^14 input set sizes", "[wp_psu][online][n=2^14]") {
-    
+
+    const size_t input_set_size = 1 << 14; 
+
     PRNG test_prng(osuCrypto::toBlock(17587658939651481968ULL, 4429212311220022857ULL));
     PRNG sender_priv_prg(osuCrypto::toBlock(4222046782215742769ULL, 6870875569393308790ULL));
     PRNG receiver_priv_prg(osuCrypto::toBlock(15095062794191717943ULL, 8053616901585134824ULL)); // Fixed seed for reproducibility
@@ -487,10 +515,11 @@ TEST_CASE("wp_psu online phase with n=2^14 input set sizes", "[wp_psu][online][n
     wp_psu::sender_precomp_correlation sender_precomp;
     wp_psu::receiver_precomp_correlation receiver_precomp;
     
-    size_t input_set_size = 1 << 14; 
     AlignedUnVector<block> sender_input_set(input_set_size);
     AlignedUnVector<block> receiver_input_set(input_set_size);
     vector<uint64_t> y_diff_x_out;
+
+    gen_rand_input_sets(test_prng, input_set_size, input_set_size/2, sender_input_set, receiver_input_set);
 
     macoro::thread_pool pool0, pool1;
     auto w0 = pool0.make_work();
@@ -507,17 +536,9 @@ TEST_CASE("wp_psu online phase with n=2^14 input set sizes", "[wp_psu][online][n
     coproto::sync_wait(macoro::when_all_ready(
                     std::move(p0) | macoro::start_on(pool0),
                     std::move(p1) | macoro::start_on(pool1)));
-
-    
-
-    for (size_t i = 0; i < input_set_size; i++) {
-        sender_input_set[i] = block(0, test_prng.get<uint64_t>());
-        receiver_input_set[i] = block(0, test_prng.get<uint64_t>()); 
-    }
     
     p0 = wp_psu::send(sender_precomp, sender_input_set, sender_priv_prg, socks[0]);
     p1 = wp_psu::receive(receiver_precomp, receiver_input_set, receiver_priv_prg, y_diff_x_out, socks[1]);
-    
     
     coproto::sync_wait(macoro::when_all_ready(
                     std::move(p0) | macoro::start_on(pool0),
@@ -539,7 +560,5 @@ TEST_CASE("wp_psu online phase with n=2^14 input set sizes", "[wp_psu][online][n
     std::sort(y_diff_x_out.begin(), y_diff_x_out.end());
 
     REQUIRE(y_diff_x_out == expected_difference);
-    
-    
 
 }

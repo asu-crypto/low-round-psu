@@ -12,8 +12,9 @@ namespace ct_iblt {
 
     // Assume all arithmetic operations are done over the vectors are mod 2^128.
     struct table {
+        size_t threshold;
         size_t ell; // Number of cells per subtable.
-        std::array<osuCrypto::AES, NUM_HASH_FUNCS> hash_funcs; // Hash functions.
+        osuCrypto::AES aes;
         std::vector<eg_pal::ct> sum_vec; // Vector of sums for each cell.
         std::vector<eg_pal::ct> cnt_vec; // Vector of counts for each cell.
     };
