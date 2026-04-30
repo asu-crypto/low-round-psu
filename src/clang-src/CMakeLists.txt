@@ -12,7 +12,7 @@ include(CheckIPOSupported)
 check_ipo_supported(RESULT supported OUTPUT error)
 
 if(NOT DEFINED VOLEPSI_INSTALL_PATH)
-  set(VOLEPSI_INSTALL_PATH "${CMAKE_SOURCE_DIR}/../volepsi")
+  set(VOLEPSI_INSTALL_PATH "${CMAKE_SOURCE_DIR}/../../volepsi")
 endif()
 
 #if(NOT DEFINED CRYPTO_TOOLS_INSTALL_PATH)
@@ -20,13 +20,13 @@ endif()
 #endif()
 
 if(NOT DEFINED CATCH2_INSTALL_PATH)
-  set(CATCH2_INSTALL_PATH "${CMAKE_SOURCE_DIR}/../catch2")
+  set(CATCH2_INSTALL_PATH "${CMAKE_SOURCE_DIR}/../../catch2")
 endif()
 
 set (CMAKE_PREFIX_PATH "${VOLEPSI_INSTALL_PATH};${CATCH2_INSTALL_PATH}")
 
 find_package(Catch2 3 REQUIRED)
-find_package(volePSI REQUIRED HINTS "../volepsi")
+find_package(volePSI REQUIRED HINTS "${VOLEPSI_INSTALL_PATH}")
 #find_package(cryptoTools REQUIRED)
 #find_package(coproto REQUIRED)
 find_path(GMP_INCLUDE_DIR gmp.h)
@@ -88,15 +88,54 @@ set(SOURCES
   #${CMAKE_SOURCE_DIR}/sr_psu.cpp
   #${CMAKE_SOURCE_DIR}/wp_psu.cpp
   ${CMAKE_SOURCE_DIR}/iblt.cpp
-  ${CMAKE_SOURCE_DIR}/ext_iblt_interface.cpp
+  #${CMAKE_SOURCE_DIR}/ext_iblt_interface.cpp
 )
 
 # Create static library for ext_iblt_interface
-add_library(iblt_interface STATIC ${CMAKE_SOURCE_DIR}/ext_iblt_interface.cpp)
+#add_library(iblt_interface STATIC ${CMAKE_SOURCE_DIR}/ext_iblt_interface.cpp)
+add_library(iblt_interface STATIC 
+    ${CMAKE_SOURCE_DIR}/ext_iblt_interface.cpp
+    ${CMAKE_SOURCE_DIR}/ext_iblt_interface_c.cpp
+)
 set_target_properties(iblt_interface PROPERTIES CXX_EXTENSIONS ON)
 target_compile_features(iblt_interface PUBLIC cxx_std_23)
+target_compile_options(iblt_interface PRIVATE 
+    -O3 
+    -march=native 
+    -ftree-vectorize
+    -Rpass=loop-vectorize
+    -fPIC                    # Position independent code
+    -fno-exceptions          # Disable exceptions for C compatibility
+    -fvisibility=hidden      # Hide internal symbols
+)
 target_link_libraries(iblt_interface PUBLIC visa::volePSI coproto::coproto)
-target_include_directories(iblt_interface PUBLIC ${CMAKE_SOURCE_DIR})
+# Set up include directories
+target_include_directories(iblt_interface PUBLIC 
+    $<BUILD_INTERFACE:${CMAKE_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>
+)
+
+# Enable IPO/LTO if supported
+#if(supported)
+#    set_property(TARGET iblt_interface PROPERTY INTERPROCEDURAL_OPTIMIZATION TRUE)
+#@endif()
+
+# Install the library and header
+install(TARGETS iblt_interface
+    EXPORT iblt_interfaceTargets
+    ARCHIVE DESTINATION lib
+    INCLUDES DESTINATION include
+)
+
+install(FILES ext_iblt_interface.hpp
+    DESTINATION include
+)
+
+install(EXPORT iblt_interfaceTargets
+    FILE iblt_interfaceConfig.cmake
+    NAMESPACE iblt::
+    DESTINATION lib/cmake/iblt_interface
+)
 
 if( supported )
     message(STATUS "IPO / LTO enabled")
@@ -105,6 +144,9 @@ else()
 endif()
 
 if(BUILD_TESTS)
+
+    find_package(Catch2 3 REQUIRED)
+
     set(ALL_TESTS
         #utils_test
         #rand_test
@@ -124,6 +166,9 @@ if(BUILD_TESTS)
     #add_executable(mpz_test ${TEST_SOURCE_PREFIX}/mpz.test.cpp ${SOURCES})
     add_executable(mod_op_utils_test ${TEST_SOURCE_PREFIX}/mod_op_utils.test.cpp ${SOURCES})
     add_executable(iblt_test ${TEST_SOURCE_PREFIX}/iblt.test.cpp ${SOURCES})
+
+    # Link iblt_test with the static library
+    target_link_libraries(iblt_test PRIVATE iblt_interface)
 
     foreach(target ${ALL_TESTS})
         set_target_properties(${target} PROPERTIES CXX_EXTENSIONS ON)
@@ -163,6 +208,9 @@ if(BUILD_BENCH)
     #add_executable(multiaes_bench ${BENCH_SOURCE_PREFIX}/multiaes.bench.cpp ${SOURCES})
     #add_executable(preprocessing_bench ${BENCH_SOURCE_PREFIX}/preprocessing.bench.cpp ${SOURCES})
     #add_executable(iblt_h5_bench ${BENCH_SOURCE_PREFIX}/iblt_h5.bench.cpp ${SOURCES})
+
+    # Link iblt_bench with the static library
+    target_link_libraries(iblt_bench PRIVATE iblt_interface)
 
     foreach(target ${ALL_BENCHS})
         set_target_properties(${target} PROPERTIES CXX_EXTENSIONS ON)
